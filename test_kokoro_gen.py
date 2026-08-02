@@ -7,6 +7,15 @@ import kokoro_gen
 
 
 class KokoroGenTests(unittest.TestCase):
+    def test_parser_accepts_cuda_device_aliases(self) -> None:
+        parser = kokoro_gen.build_arg_parser()
+
+        args_dash = parser.parse_args(["--cuda-device", "1"])
+        self.assertEqual(args_dash.cuda_device, "1")
+
+        args_underscore = parser.parse_args(["--cuda_device", "0"])
+        self.assertEqual(args_underscore.cuda_device, "0")
+
     def test_generate_kokoro_tts_concatenates_pipeline_audio(self) -> None:
         fake_pipeline = MagicMock(
             return_value=[

@@ -10,6 +10,15 @@ import cuda_gen
 
 
 class CudaGenTests(unittest.TestCase):
+    def test_parser_accepts_cuda_device_aliases(self) -> None:
+        parser = cuda_gen.build_arg_parser()
+
+        args_dash = parser.parse_args(["--cuda-device", "1"])
+        self.assertEqual(args_dash.cuda_device, "1")
+
+        args_underscore = parser.parse_args(["--cuda_device", "0"])
+        self.assertEqual(args_underscore.cuda_device, "0")
+
     def test_generate_output_filename_returns_uuid_wav_name(self) -> None:
         result = cuda_gen.generate_output_filename()
 

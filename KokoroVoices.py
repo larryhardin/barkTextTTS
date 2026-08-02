@@ -1,0 +1,77 @@
+class KokoroVoices:
+    class American:
+        # Female Voices
+        HEART  = "af_heart"  # Default / Recommended
+        BELLA  = "af_bella"
+        SARAH  = "af_sarah"
+        SKY    = "af_sky"
+        NICOLE = "af_nicole"
+        ALLOY  = "af_alloy"
+        JESSICA= "af_jessica"
+        KORE   = "af_kore"
+        LOIS   = "af_lois"
+        SAOIRSE= "af_saoirse"
+        
+        # Male Voices
+        ADAM    = "am_adam"
+        MICHAEL = "am_michael"
+        ECHO    = "am_echo"
+        ERIC    = "am_eric"
+        FENRIR  = "am_fenrir"
+        HARPER  = "am_harper"
+        ONYX    = "am_onyx"
+        PUCK    = "am_puck"
+        SANTA   = "am_santa"
+
+    class British:
+        # Female Voices
+        EMMA     = "bf_emma"
+        ISABELLA = "bf_isabella"
+        ALICE    = "bf_alice"
+        LILY     = "bf_lily"
+        
+        # Male Voices
+        GEORGE   = "bm_george"
+        LEWIS    = "bm_lewis"
+        FABLE    = "bm_fable"
+        STEFT    = "bm_stefan"
+
+    class Spanish:
+        DORA_F = "ef_dora"
+        ALEX_M = "em_alex"
+        SANTA_M = "em_santa"
+
+    class French:
+        SIWIS_F = "ff_siwis"
+
+    class Hindi:
+        ALPHA_F = "hf_alpha"
+        BETA_F  = "hf_beta"
+        OMEGA_M = "hm_omega"
+        PSI_M   = "hm_psi"
+
+    class Italian:
+        SARA_F   = "if_sara"
+        NICOLA_M = "im_nicola"
+
+    class Japanese:
+        ALPHA_F       = "jf_alpha"
+        GONGITSUNE_F  = "jf_gongitsune"
+        NEZUMI_F      = "jf_nezumi"
+        TEBUKURO_F    = "jf_tebukuro"
+        KUMO_M        = "jm_kumo"
+
+    class Mandarin:
+        XIAOBEI_F = "zf_xiaobei"
+        XIAONI_F  = "zf_xiaoni"
+        XIAOXIAO_F= "zf_xiaoxiao"
+        XIAOYI_F  = "zf_xiaoyi"
+        YUNJIAN_M = "zm_yunjian"
+        YUNXI_M   = "zm_yunxi"
+        YUNXIA_M  = "zm_yunxia"
+        YUNYANG_M = "zm_yunyang"
+
+    class Portuguese_BR:
+        DORA_F  = "pf_dora"
+        ALEX_M  = "pm_alex"
+        SANTA_M = "pm_santa"

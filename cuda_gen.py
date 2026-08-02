@@ -137,7 +137,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional TXT file containing one line of text per segment; blank lines add a one-second pause.",
     )
+    parser.add_argument(
+        "--cuda-device",
+        "--cuda_device",
+        dest="cuda_device",
+        default=None,
+        help="Optional CUDA device index to expose to this process, for example 0 or 1.",
+    )
     return parser
+
+
+def apply_cuda_device(cuda_device: Optional[str]) -> None:
+    if cuda_device is None:
+        return
+
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(cuda_device)
+    log(f"Using CUDA device index: {cuda_device}")
 
 
 def load_segments_from_json(script_json_path: str) -> List[Any]:
@@ -247,9 +263,15 @@ def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
 
+    apply_cuda_device(args.cuda_device)
+
+    if not torch.cuda.is_available():
+        log("ERROR: CUDA is not available on this system or the selected CUDA device is not visible.")
+        return
+
     log(
         "Starting TTS generation with parameters: "
-        f"text_to_speak='{args.text_to_speak}', voice_profile='{args.voice_profile}', script_json='{args.script_json}', script_txt='{args.script_txt}'"
+        f"text_to_speak='{args.text_to_speak}', voice_profile='{args.voice_profile}', script_json='{args.script_json}', script_txt='{args.script_txt}', cuda_device='{args.cuda_device}'"
     )
 
     if args.script_json:
@@ -278,9 +300,6 @@ if __name__ == "__main__":
     os.environ["SUNO_ENABLE_CPU_OFFLOAD"] = "True"
 
     try:
-        if torch.cuda.is_available():
-            main()
-        else:
-            log("ERROR: CUDA is not available on this system. Please check your PyTorch installation.")
+        main()
     finally:
         cleanup_bark_model_components()

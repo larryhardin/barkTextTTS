@@ -20,6 +20,8 @@ def clean_text_for_kokoro(text: str) -> str:
         r"\bMs\b\.?": "Missus",
         r"\betc\b\.?": "et cetera",
         r"\bvs\b\.?": "versus",
+        "McGee": "Mick Ghee",
+        "Laberge": "la-Barge",
     }
     for pattern, replacement in replacements.items():
         text = re.compile(pattern, re.IGNORECASE).sub(replacement, text)
@@ -119,7 +121,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional TXT file containing one line of text per segment; blank lines add a one-second pause.",
     )
+    parser.add_argument(
+        "--cuda-device",
+        "--cuda_device",
+        dest="cuda_device",
+        default=None,
+        help="Optional CUDA device index to expose to this process, for example 0 or 1.",
+    )
     return parser
+
+
+def apply_cuda_device(cuda_device: Optional[str]) -> None:
+    if cuda_device is None:
+        return
+
+    import os
+
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(cuda_device)
+    log(f"Using CUDA device index: {cuda_device}")
 
 
 def load_segments_from_json(script_json_path: str) -> List[Any]:
@@ -226,9 +246,11 @@ def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
 
+    apply_cuda_device(args.cuda_device)
+
     log(
         "Starting Kokoro TTS generation with parameters: "
-        f"text_to_speak='{args.text_to_speak}', voice_profile='{args.voice_profile}', lang_code='{args.lang_code}', speed='{args.speed}', script_json='{args.script_json}', script_txt='{args.script_txt}'"
+        f"text_to_speak='{args.text_to_speak}', voice_profile='{args.voice_profile}', lang_code='{args.lang_code}', speed='{args.speed}', script_json='{args.script_json}', script_txt='{args.script_txt}', cuda_device='{args.cuda_device}'"
     )
 
     if args.script_json:
