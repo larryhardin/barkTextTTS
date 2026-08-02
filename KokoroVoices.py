@@ -2,23 +2,24 @@ class KokoroVoices:
     class American:
         # Female Voices
         HEART  = "af_heart"  # Default / Recommended
-        BELLA  = "af_bella"
-        SARAH  = "af_sarah"
-        SKY    = "af_sky"
-        NICOLE = "af_nicole"
         ALLOY  = "af_alloy"
+        AOEDE  = "af_aoede"
+        BELLA  = "af_bella"
         JESSICA= "af_jessica"
         KORE   = "af_kore"
-        LOIS   = "af_lois"
-        SAOIRSE= "af_saoirse"
+        NICOLE = "af_nicole"
+        NOVA   = "af_nova"
+        RIVER  = "af_river"
+        SARAH  = "af_sarah"
+        SKY    = "af_sky"
         
         # Male Voices
         ADAM    = "am_adam"
-        MICHAEL = "am_michael"
         ECHO    = "am_echo"
         ERIC    = "am_eric"
         FENRIR  = "am_fenrir"
-        HARPER  = "am_harper"
+        LIAM    = "am_liam"
+        MICHAEL = "am_michael"
         ONYX    = "am_onyx"
         PUCK    = "am_puck"
         SANTA   = "am_santa"
@@ -31,10 +32,10 @@ class KokoroVoices:
         LILY     = "bf_lily"
         
         # Male Voices
+        DANIEL   = "bm_daniel"
         GEORGE   = "bm_george"
         LEWIS    = "bm_lewis"
         FABLE    = "bm_fable"
-        STEFT    = "bm_stefan"
 
     class Spanish:
         DORA_F = "ef_dora"
