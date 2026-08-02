@@ -18,7 +18,8 @@ First successful run:
 python .\kokoro_gen.py --text-to-speak "Hello from Kokoro TTS" --voice BELLA --lang-code a
 ```
 
-The script writes output to a random UUID filename ending in .wav.
+The script writes output as `VOICE_UUID.wav`.
+Example: `BELLA_550e8400-e29b-41d4-a716-446655440000.wav`.
 
 ## Kokoro Gen: All Run Scenarios
 

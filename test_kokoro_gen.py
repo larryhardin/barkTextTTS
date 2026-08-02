@@ -1,4 +1,5 @@
 import unittest
+import uuid
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -7,16 +8,24 @@ import kokoro_gen
 
 
 class KokoroGenTests(unittest.TestCase):
-    def test_resolve_voice_identifier_is_case_insensitive(self) -> None:
-        self.assertEqual(kokoro_gen.resolve_voice_identifier("bella"), "af_bella")
-        self.assertEqual(kokoro_gen.resolve_voice_identifier("BeLlA"), "af_bella")
+    def test_resolve_voice_selection_is_case_insensitive(self) -> None:
+        self.assertEqual(kokoro_gen.resolve_voice_selection("bella"), ("BELLA", "af_bella"))
+        self.assertEqual(kokoro_gen.resolve_voice_selection("BeLlA"), ("BELLA", "af_bella"))
 
-    def test_resolve_voice_identifier_defaults_to_bella_when_unknown(self) -> None:
+    def test_resolve_voice_selection_defaults_to_bella_when_unknown(self) -> None:
         with patch("kokoro_gen.log") as mocked_log:
-            resolved = kokoro_gen.resolve_voice_identifier("not_a_voice")
+            resolved = kokoro_gen.resolve_voice_selection("not_a_voice")
 
-        self.assertEqual(resolved, "af_bella")
+        self.assertEqual(resolved, ("BELLA", "af_bella"))
         mocked_log.assert_called_once()
+
+    def test_generate_output_filename_prefixes_uppercase_voice(self) -> None:
+        result = kokoro_gen.generate_output_filename("bella")
+
+        self.assertTrue(result.startswith("BELLA_"))
+        self.assertTrue(result.endswith(".wav"))
+        parsed = uuid.UUID(result[len("BELLA_") : -4])
+        self.assertEqual(str(parsed), result[len("BELLA_") : -4])
 
     def test_parser_accepts_cuda_device_aliases(self) -> None:
         parser = kokoro_gen.build_arg_parser()

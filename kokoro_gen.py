@@ -40,20 +40,20 @@ _VOICE_NAME_TO_ID, _VOICE_ID_TO_ID = _build_voice_maps()
 _DEFAULT_VOICE_NAME = "BELLA"
 
 
-def resolve_voice_identifier(voice_parameter: Optional[str]) -> str:
+def resolve_voice_selection(voice_parameter: Optional[str]) -> tuple[str, str]:
     default_voice_id = _VOICE_NAME_TO_ID.get(_DEFAULT_VOICE_NAME, "af_bella")
     if not voice_parameter:
-        return default_voice_id
+        return _DEFAULT_VOICE_NAME, default_voice_id
 
     voice_key = str(voice_parameter).upper()
     if voice_key in _VOICE_NAME_TO_ID:
-        return _VOICE_NAME_TO_ID[voice_key]
+        return voice_key, _VOICE_NAME_TO_ID[voice_key]
 
     if voice_key in _VOICE_ID_TO_ID:
-        return _VOICE_ID_TO_ID[voice_key]
+        return voice_key, _VOICE_ID_TO_ID[voice_key]
 
     log(f"Voice '{voice_parameter}' not found. Defaulting to {_DEFAULT_VOICE_NAME} ({default_voice_id}).")
-    return default_voice_id
+    return _DEFAULT_VOICE_NAME, default_voice_id
 
 
 def clean_text_for_kokoro(text: str) -> str:
@@ -89,8 +89,9 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
-def generate_output_filename() -> str:
-    return f"{uuid.uuid4()}.wav"
+def generate_output_filename(voice_label: str) -> str:
+    safe_voice_label = re.sub(r"[^A-Z0-9_-]", "_", voice_label.upper())
+    return f"{safe_voice_label}_{uuid.uuid4()}.wav"
 
 
 def concatenate_audio_segments(audio_segments: List[np.ndarray]) -> np.ndarray:
@@ -230,6 +231,7 @@ def extract_segment_text(segment: Any) -> Optional[str]:
 def generate_kokoro_tts(
     text_to_speak: str,
     voice_profile: str = "af_heart",
+    voice_label: str = _DEFAULT_VOICE_NAME,
     lang_code: str = "a",
     speed: float = 1.0,
     output_filename: Optional[str] = None,
@@ -251,7 +253,7 @@ def generate_kokoro_tts(
         return normalized_audio
 
     if output_filename is None:
-        output_filename = generate_output_filename()
+        output_filename = generate_output_filename(voice_label)
 
     if normalized_audio.size and output_filename:
         scipy.io.wavfile.write(output_filename, rate=SAMPLE_RATE, data=normalized_audio)
@@ -292,11 +294,11 @@ def main() -> None:
     args = parser.parse_args()
 
     apply_cuda_device(args.cuda_device)
-    resolved_voice_profile = resolve_voice_identifier(args.voice_profile)
+    resolved_voice_label, resolved_voice_profile = resolve_voice_selection(args.voice_profile)
 
     log(
         "Starting Kokoro TTS generation with parameters: "
-        f"text_to_speak='{args.text_to_speak}', voice_profile='{args.voice_profile}', resolved_voice='{resolved_voice_profile}', lang_code='{args.lang_code}', speed='{args.speed}', script_json='{args.script_json}', script_txt='{args.script_txt}', cuda_device='{args.cuda_device}'"
+        f"text_to_speak='{args.text_to_speak}', voice_profile='{args.voice_profile}', resolved_voice_label='{resolved_voice_label}', resolved_voice='{resolved_voice_profile}', lang_code='{args.lang_code}', speed='{args.speed}', script_json='{args.script_json}', script_txt='{args.script_txt}', cuda_device='{args.cuda_device}'"
     )
 
     if args.script_json:
@@ -304,7 +306,7 @@ def main() -> None:
         combined_audio = process_segments_to_audio(segments, resolved_voice_profile, args.lang_code, args.speed)
 
         if combined_audio.size:
-            output_filename = generate_output_filename()
+            output_filename = generate_output_filename(resolved_voice_label)
             scipy.io.wavfile.write(output_filename, rate=SAMPLE_RATE, data=combined_audio)
             log(f"Saved combined audio file to: {output_filename}")
     elif args.script_txt:
@@ -312,12 +314,12 @@ def main() -> None:
         combined_audio = process_segments_to_audio(segments, resolved_voice_profile, args.lang_code, args.speed)
 
         if combined_audio.size:
-            output_filename = generate_output_filename()
+            output_filename = generate_output_filename(resolved_voice_label)
             scipy.io.wavfile.write(output_filename, rate=SAMPLE_RATE, data=combined_audio)
             log(f"Saved combined audio file to: {output_filename}")
     else:
         text_to_use = args.text_to_speak or "you ain't axe me to says nuffin"
-        generate_kokoro_tts(text_to_use, resolved_voice_profile, args.lang_code, args.speed)
+        generate_kokoro_tts(text_to_use, resolved_voice_profile, resolved_voice_label, args.lang_code, args.speed)
 
 
 if __name__ == "__main__":
