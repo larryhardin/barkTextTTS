@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+import uuid
 from unittest.mock import patch
 
 import numpy as np
@@ -9,6 +10,13 @@ import cuda_gen
 
 
 class CudaGenTests(unittest.TestCase):
+    def test_generate_output_filename_returns_uuid_wav_name(self) -> None:
+        result = cuda_gen.generate_output_filename()
+
+        self.assertTrue(result.endswith(".wav"))
+        parsed = uuid.UUID(result[:-4])
+        self.assertEqual(str(parsed), result[:-4])
+
     def test_concatenate_audio_segments_returns_combined_array(self) -> None:
         chunks = [
             np.array([0.1, -0.2], dtype=np.float32),

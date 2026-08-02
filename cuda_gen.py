@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import uuid
 import warnings
 from typing import Any, List, Optional
 
@@ -64,6 +65,10 @@ def normalize_audio(audio_data: np.ndarray) -> np.ndarray:
 
 def log(message: str) -> None:
     print(message, flush=True)
+
+
+def generate_output_filename() -> str:
+    return f"{uuid.uuid4()}.wav"
 
 
 def concatenate_audio_segments(audio_segments: List[np.ndarray]) -> np.ndarray:
@@ -178,7 +183,7 @@ def extract_segment_text(segment: Any) -> Optional[str]:
 def generate_high_quality_tts(
     text_to_speak: str,
     vprofile: str = "v2/en_speaker_7",
-    output_filename: Optional[str] = "bark_fixed_cuda_output.wav",
+    output_filename: Optional[str] = None,
     return_audio_array: bool = False,
 ) -> Optional[np.ndarray]:
     raw_text = text_to_speak
@@ -208,6 +213,9 @@ def generate_high_quality_tts(
 
     if return_audio_array:
         return normalized_audio
+
+    if output_filename is None:
+        output_filename = generate_output_filename()
 
     if output_filename:
         scipy.io.wavfile.write(output_filename, rate=sampling_rate, data=normalized_audio)
@@ -249,8 +257,7 @@ def main() -> None:
         combined_audio = process_segments_to_audio(segments, args.voice_profile)
 
         if combined_audio.size:
-            output_stem = os.path.splitext(os.path.basename(args.script_json))[0]
-            output_filename = f"{output_stem}_combined.wav"
+            output_filename = generate_output_filename()
             scipy.io.wavfile.write(output_filename, rate=24000, data=combined_audio)
             log(f"Saved combined audio file to: {output_filename}")
     elif args.script_txt:
@@ -259,8 +266,7 @@ def main() -> None:
         combined_audio = process_segments_to_audio(segments, args.voice_profile)
 
         if combined_audio.size:
-            output_stem = os.path.splitext(os.path.basename(args.script_txt))[0]
-            output_filename = f"{output_stem}_combined.wav"
+            output_filename = generate_output_filename()
             scipy.io.wavfile.write(output_filename, rate=24000, data=combined_audio)
             log(f"Saved combined audio file to: {output_filename}")
     else:
