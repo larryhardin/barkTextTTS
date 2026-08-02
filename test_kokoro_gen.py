@@ -7,6 +7,17 @@ import kokoro_gen
 
 
 class KokoroGenTests(unittest.TestCase):
+    def test_resolve_voice_identifier_is_case_insensitive(self) -> None:
+        self.assertEqual(kokoro_gen.resolve_voice_identifier("bella"), "af_bella")
+        self.assertEqual(kokoro_gen.resolve_voice_identifier("BeLlA"), "af_bella")
+
+    def test_resolve_voice_identifier_defaults_to_bella_when_unknown(self) -> None:
+        with patch("kokoro_gen.log") as mocked_log:
+            resolved = kokoro_gen.resolve_voice_identifier("not_a_voice")
+
+        self.assertEqual(resolved, "af_bella")
+        mocked_log.assert_called_once()
+
     def test_parser_accepts_cuda_device_aliases(self) -> None:
         parser = kokoro_gen.build_arg_parser()
 
