@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,6 +87,18 @@ class _GenerationJob:
     kokoro_speed: Optional[float] = None
     bark_voice_profile: Optional[str] = None
     cuda_device: Optional[str] = None
+    conversational_lines: Optional[List[Tuple[str, str, str]]] = None
+
+
+@dataclass
+class _DialogueBuilderRow:
+    frame: ttk.Frame
+    character_var: tk.StringVar
+    line_var: tk.StringVar
+    character_combo: ttk.Combobox
+    line_entry: ttk.Entry
+    add_button: ttk.Button
+    committed: bool = False
 
 
 class _QueueLogWriter:
@@ -234,6 +247,29 @@ class TTSApp:
         self.kokoro_cuda_combo: Optional[ttk.Combobox] = None
         self.bark_cuda_combo: Optional[ttk.Combobox] = None
 
+        self.character_name_var = tk.StringVar(value="")
+        self.character_language_var = tk.StringVar(value=default_language)
+        self.character_sex_var = tk.StringVar(value="Female")
+        self.character_voice_display_var = tk.StringVar(value="")
+        self.character_voice_lookup: Dict[str, str] = {}
+        self.characters: Dict[str, Tuple[str, str, str]] = {}
+        self.dialogue_entries: List[Tuple[str, str, str]] = []
+        self.dialogue_builder_rows: List[_DialogueBuilderRow] = []
+
+        self.character_language_combo: Optional[ttk.Combobox] = None
+        self.character_sex_combo: Optional[ttk.Combobox] = None
+        self.character_voice_combo: Optional[ttk.Combobox] = None
+        self.character_done_button: Optional[ttk.Button] = None
+        self.dialogue_builder_rows_frame: Optional[ttk.Frame] = None
+        self.dialogue_builder_canvas: Optional[tk.Canvas] = None
+        self.dialogue_builder_canvas_window_id: Optional[int] = None
+        self.generate_dialogue_button: Optional[ttk.Button] = None
+        self.clear_dialogue_button: Optional[ttk.Button] = None
+        self.clear_characters_button: Optional[ttk.Button] = None
+        self.conversation_rows_frame: Optional[ttk.Frame] = None
+        self.conversation_canvas: Optional[tk.Canvas] = None
+        self.last_job_source_kind: Optional[str] = None
+
         self.loading_frame: Optional[ttk.Frame] = None
         self.loading_progress: Optional[ttk.Progressbar] = None
         self.loading_status_var = tk.StringVar(value="")
@@ -291,7 +327,7 @@ class TTSApp:
         self.loading_progress.pack(fill=tk.X, pady=(3, 0))
 
         source_frame = ttk.LabelFrame(self.main_container, text="Input Source", padding=10)
-        source_frame.pack(fill=tk.X, pady=(0, 10))
+        source_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         radio_row = ttk.Frame(source_frame)
         radio_row.pack(fill=tk.X)
@@ -312,6 +348,14 @@ class TTSApp:
             command=self._render_source_mode,
         ).pack(side=tk.LEFT)
 
+        ttk.Radiobutton(
+            radio_row,
+            text="Conversational",
+            value="conversational",
+            variable=self.source_mode_var,
+            command=self._render_source_mode,
+        ).pack(side=tk.LEFT, padx=(10, 0))
+
         self.source_content_frame = ttk.Frame(source_frame)
         self.source_content_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
 
@@ -328,7 +372,6 @@ class TTSApp:
 
         self.play_button = ttk.Button(actions, text="Play Generated File", command=self._play_generated, state=tk.DISABLED)
         self.play_button.pack(side=tk.LEFT, padx=(10, 0))
-        self.play_button.pack_forget()
 
         self._render_source_mode()
 
@@ -342,12 +385,24 @@ class TTSApp:
 
     def _render_source_mode(self) -> None:
         self._clear_frame(self.source_content_frame)
+        mode = self.source_mode_var.get()
 
-        if self.source_mode_var.get() == "text":
+        if mode == "conversational" and self.model_var.get() != "Kokoro":
+            self.model_var.set("Kokoro")
+            self._render_model_fields()
+
+        self._refresh_start_button_enabled()
+
+        if mode == "text":
             ttk.Label(self.source_content_frame, text="Text to speak:").pack(anchor=tk.W)
             self.inline_text_widget = tk.Text(self.source_content_frame, height=8, wrap=tk.WORD)
             self.inline_text_widget.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
             self.inline_text_widget.insert("1.0", "")
+            return
+
+        if mode == "conversational":
+            self.inline_text_widget = None
+            self._render_conversational_source_mode()
             return
 
         self.inline_text_widget = None
@@ -361,6 +416,372 @@ class TTSApp:
             self.source_content_frame,
             text="Choose a .txt or .json script file. The UI will map it to the right CLI argument.",
         ).pack(anchor=tk.W, pady=(8, 0))
+
+    def _render_conversational_source_mode(self) -> None:
+        assign_frame = ttk.LabelFrame(self.source_content_frame, text="Assign characters to voice", padding=10)
+        assign_frame.pack(fill=tk.X)
+
+        button_row = ttk.Frame(assign_frame)
+        button_row.pack(fill=tk.X, pady=(0, 8))
+        self.character_done_button = ttk.Button(button_row, text="Add", command=self._save_character, state=tk.DISABLED)
+        self.character_done_button.pack(side=tk.LEFT)
+
+        name_row = ttk.Frame(assign_frame)
+        name_row.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(name_row, text="Character Name:", width=18).pack(side=tk.LEFT)
+        name_entry = ttk.Entry(name_row, textvariable=self.character_name_var)
+        name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        name_entry.bind("<FocusOut>", self._on_character_name_focus_out)
+
+        voice_row = ttk.Frame(assign_frame)
+        voice_row.pack(fill=tk.X)
+        ttk.Label(voice_row, text="Voice Options:", width=18).pack(side=tk.LEFT)
+
+        voice_options = ttk.Frame(assign_frame)
+        voice_options.pack(fill=tk.X, pady=(6, 0))
+
+        ttk.Label(voice_options, text="Voice Language:").grid(row=0, column=0, sticky="w")
+        self.character_language_combo = ttk.Combobox(
+            voice_options,
+            textvariable=self.character_language_var,
+            values=self.kokoro_languages,
+            state="readonly",
+            width=18,
+        )
+        self.character_language_combo.grid(row=0, column=1, padx=(6, 12), sticky="w")
+        self.character_language_combo.bind("<<ComboboxSelected>>", self._on_character_language_changed)
+
+        ttk.Label(voice_options, text="Voice Sex:").grid(row=0, column=2, sticky="w")
+        self.character_sex_combo = ttk.Combobox(
+            voice_options,
+            textvariable=self.character_sex_var,
+            values=["Female", "Male"],
+            state="readonly",
+            width=12,
+        )
+        self.character_sex_combo.grid(row=0, column=3, padx=(6, 12), sticky="w")
+        self.character_sex_combo.bind("<<ComboboxSelected>>", self._on_character_sex_changed)
+
+        ttk.Label(voice_options, text="Voice:").grid(row=0, column=4, sticky="w")
+        self.character_voice_combo = ttk.Combobox(
+            voice_options,
+            textvariable=self.character_voice_display_var,
+            values=[],
+            state="readonly",
+            width=18,
+        )
+        self.character_voice_combo.grid(row=0, column=5, padx=(6, 0), sticky="w")
+
+        dialogue_frame = ttk.LabelFrame(self.source_content_frame, text="Dialogue Builder", padding=10)
+        dialogue_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+
+        dialogue_builder_rows_container = ttk.Frame(dialogue_frame)
+        dialogue_builder_rows_container.pack(fill=tk.X)
+
+        self.dialogue_builder_canvas = tk.Canvas(dialogue_builder_rows_container, height=110)
+        self.dialogue_builder_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        dialogue_builder_scrollbar = ttk.Scrollbar(
+            dialogue_builder_rows_container,
+            orient=tk.VERTICAL,
+            command=self.dialogue_builder_canvas.yview,
+        )
+        dialogue_builder_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.dialogue_builder_canvas.configure(yscrollcommand=dialogue_builder_scrollbar.set)
+
+        self.dialogue_builder_rows_frame = ttk.Frame(self.dialogue_builder_canvas)
+        self.dialogue_builder_canvas_window_id = self.dialogue_builder_canvas.create_window(
+            (0, 0),
+            window=self.dialogue_builder_rows_frame,
+            anchor="nw",
+        )
+        self.dialogue_builder_rows_frame.bind(
+            "<Configure>",
+            lambda _event: self.dialogue_builder_canvas.configure(scrollregion=self.dialogue_builder_canvas.bbox("all")),
+        )
+        self.dialogue_builder_canvas.bind("<Configure>", self._on_dialogue_builder_canvas_configure)
+
+        self.dialogue_builder_rows.clear()
+        self._create_dialogue_builder_row()
+
+        list_frame = ttk.Frame(dialogue_frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 6))
+
+        self.conversation_canvas = tk.Canvas(list_frame, height=180)
+        self.conversation_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.conversation_canvas.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.conversation_canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.conversation_rows_frame = ttk.Frame(self.conversation_canvas)
+        self.conversation_canvas.create_window((0, 0), window=self.conversation_rows_frame, anchor="nw")
+        self.conversation_rows_frame.bind(
+            "<Configure>",
+            lambda _event: self.conversation_canvas.configure(scrollregion=self.conversation_canvas.bbox("all")),
+        )
+
+        actions_row = ttk.Frame(dialogue_frame)
+        actions_row.pack(fill=tk.X)
+        self.generate_dialogue_button = ttk.Button(
+            actions_row,
+            text="Generate Dialogue",
+            command=self._start_generation,
+            state=tk.DISABLED,
+        )
+        self.generate_dialogue_button.pack(side=tk.LEFT)
+
+        self.clear_dialogue_button = ttk.Button(
+            actions_row,
+            text="Clear Dialogue",
+            command=self._clear_dialogue,
+            state=tk.DISABLED,
+        )
+        self.clear_dialogue_button.pack(side=tk.LEFT, padx=(8, 0))
+
+        self.clear_characters_button = ttk.Button(
+            actions_row,
+            text="Clear Characters",
+            command=self._clear_characters,
+            state=tk.DISABLED,
+        )
+        self.clear_characters_button.pack(side=tk.LEFT, padx=(8, 0))
+
+        self._refresh_character_sex_options()
+        self._refresh_character_voice_options()
+        self._refresh_character_dropdown()
+        self._refresh_conversation_list()
+        self._refresh_dialogue_add_enabled()
+        self._refresh_generate_dialogue_enabled()
+        self._refresh_clear_buttons_state()
+
+    def _on_dialogue_builder_canvas_configure(self, event: object) -> None:
+        if self.dialogue_builder_canvas is None or self.dialogue_builder_canvas_window_id is None:
+            return
+        self.dialogue_builder_canvas.itemconfigure(self.dialogue_builder_canvas_window_id, width=event.width)
+
+    def _on_character_name_focus_out(self, _event: object = None) -> None:
+        is_name_valid = bool(self.character_name_var.get().strip())
+        if self.character_done_button is not None:
+            self.character_done_button.configure(state=tk.NORMAL if is_name_valid else tk.DISABLED)
+
+    def _reset_character_editor(self) -> None:
+        self.character_name_var.set("")
+        default_language = "American" if "American" in self.kokoro_languages else (self.kokoro_languages[0] if self.kokoro_languages else "")
+        self.character_language_var.set(default_language)
+        self.character_sex_var.set("Female")
+        self._refresh_character_sex_options()
+        self._refresh_character_voice_options()
+        if self.character_done_button is not None:
+            self.character_done_button.configure(state=tk.DISABLED)
+
+    def _on_character_language_changed(self, _event: object = None) -> None:
+        self._refresh_character_sex_options()
+        self._refresh_character_voice_options()
+
+    def _on_character_sex_changed(self, _event: object = None) -> None:
+        self._refresh_character_voice_options()
+
+    def _refresh_character_sex_options(self) -> None:
+        language = self.character_language_var.get().strip()
+        language_data = self.kokoro_voice_catalog.get(language, {"Female": [], "Male": []})
+        available_sexes = [sex for sex in ("Female", "Male") if language_data.get(sex)]
+        if not available_sexes:
+            available_sexes = ["Female", "Male"]
+
+        if self.character_sex_combo is not None:
+            self.character_sex_combo.configure(values=available_sexes)
+
+        if self.character_sex_var.get().strip() not in available_sexes:
+            self.character_sex_var.set(available_sexes[0])
+
+    def _refresh_character_voice_options(self) -> None:
+        language = self.character_language_var.get().strip()
+        sex = self.character_sex_var.get().strip()
+        language_data = self.kokoro_voice_catalog.get(language, {"Female": [], "Male": []})
+        voice_entries = language_data.get(sex, [])
+
+        display_values = [display_name for display_name, _ in voice_entries]
+        self.character_voice_lookup = {display_name: voice_id for display_name, voice_id in voice_entries}
+
+        if self.character_voice_combo is not None:
+            self.character_voice_combo.configure(values=display_values)
+
+        current_display = self.character_voice_display_var.get().strip()
+        if current_display not in self.character_voice_lookup:
+            self.character_voice_display_var.set(display_values[0] if display_values else "")
+
+    def _save_character(self) -> None:
+        name = self.character_name_var.get().strip()
+        voice_display = self.character_voice_display_var.get().strip()
+        voice_id = self.character_voice_lookup.get(voice_display)
+        if not name or not voice_id:
+            return
+
+        self.characters[name] = (
+            self.character_language_var.get().strip(),
+            self.character_sex_var.get().strip(),
+            voice_id,
+        )
+        self._refresh_character_dropdown()
+        self._refresh_clear_buttons_state()
+        self._reset_character_editor()
+
+    def _refresh_character_dropdown(self) -> None:
+        values = list(self.characters.keys())
+        for row in self.dialogue_builder_rows:
+            row.character_combo.configure(values=values)
+            if row.character_var.get().strip() not in values:
+                row.character_var.set(values[0] if values else "")
+        self._refresh_dialogue_add_enabled()
+
+    def _refresh_dialogue_add_enabled(self, _event: object = None) -> None:
+        for row in self.dialogue_builder_rows:
+            if row.committed:
+                row.add_button.configure(state=tk.DISABLED)
+                continue
+
+            has_character = row.character_var.get().strip() in self.characters
+            has_text = bool(row.line_var.get().strip())
+            row.add_button.configure(state=tk.NORMAL if (has_character and has_text) else tk.DISABLED)
+
+    def _create_dialogue_builder_row(self) -> None:
+        if self.dialogue_builder_rows_frame is None:
+            return
+
+        row_frame = ttk.Frame(self.dialogue_builder_rows_frame)
+        row_frame.pack(fill=tk.X, pady=(0, 4))
+
+        character_var = tk.StringVar(value="")
+        line_var = tk.StringVar(value="")
+
+        ttk.Label(row_frame, text="Character:").pack(side=tk.LEFT)
+        character_combo = ttk.Combobox(
+            row_frame,
+            textvariable=character_var,
+            values=list(self.characters.keys()),
+            state="readonly",
+            width=18,
+        )
+        character_combo.pack(side=tk.LEFT, padx=(6, 10))
+
+        ttk.Label(row_frame, text="Line:").pack(side=tk.LEFT)
+        line_entry = ttk.Entry(row_frame, textvariable=line_var)
+        line_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 8))
+
+        row = _DialogueBuilderRow(
+            frame=row_frame,
+            character_var=character_var,
+            line_var=line_var,
+            character_combo=character_combo,
+            line_entry=line_entry,
+            add_button=ttk.Button(row_frame, text="+", width=3),
+        )
+
+        row.add_button.configure(command=lambda current_row=row: self._add_dialogue_entry(current_row))
+        row.add_button.pack(side=tk.LEFT)
+        character_combo.bind("<<ComboboxSelected>>", self._refresh_dialogue_add_enabled)
+        line_entry.bind("<KeyRelease>", self._refresh_dialogue_add_enabled)
+
+        self.dialogue_builder_rows.append(row)
+        self._refresh_character_dropdown()
+
+    def _reset_dialogue_builder_rows(self) -> None:
+        for row in self.dialogue_builder_rows:
+            row.frame.destroy()
+        self.dialogue_builder_rows.clear()
+        self._create_dialogue_builder_row()
+
+    def _add_dialogue_entry(self, row: _DialogueBuilderRow) -> None:
+        if row.committed:
+            return
+
+        character_name = row.character_var.get().strip()
+        line_text = row.line_var.get().strip()
+        if not character_name or not line_text or character_name not in self.characters:
+            return
+
+        voice_id = self.characters[character_name][2]
+        self.dialogue_entries.append((character_name, line_text, voice_id))
+        row.committed = True
+        row.character_combo.configure(state=tk.DISABLED)
+        row.line_entry.configure(state=tk.DISABLED)
+        row.add_button.configure(state=tk.DISABLED)
+
+        self._create_dialogue_builder_row()
+        self._refresh_dialogue_add_enabled()
+        self._refresh_conversation_list()
+        self._refresh_generate_dialogue_enabled()
+
+    def _refresh_conversation_list(self) -> None:
+        if self.conversation_rows_frame is None:
+            return
+
+        for child in self.conversation_rows_frame.winfo_children():
+            child.destroy()
+
+        for index, (character_name, line_text, _voice_id) in enumerate(self.dialogue_entries):
+            row = ttk.Frame(self.conversation_rows_frame)
+            row.pack(fill=tk.X, pady=2)
+            ttk.Label(row, text=f"{index + 1}. {character_name}: {line_text}", anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ttk.Button(row, text="-", width=3, command=lambda idx=index: self._remove_dialogue_entry(idx)).pack(side=tk.RIGHT)
+
+    def _remove_dialogue_entry(self, index: int) -> None:
+        if 0 <= index < len(self.dialogue_entries):
+            self.dialogue_entries.pop(index)
+
+            committed_rows = [row for row in self.dialogue_builder_rows if row.committed]
+            if index < len(committed_rows):
+                committed_row = committed_rows[index]
+                committed_row.frame.destroy()
+                self.dialogue_builder_rows.remove(committed_row)
+
+            if not any(not row.committed for row in self.dialogue_builder_rows):
+                self._create_dialogue_builder_row()
+
+        self._refresh_conversation_list()
+        self._refresh_dialogue_add_enabled()
+        self._refresh_generate_dialogue_enabled()
+
+    def _refresh_generate_dialogue_enabled(self) -> None:
+        enabled = bool(self.dialogue_entries)
+        if self.generate_dialogue_button is not None:
+            self.generate_dialogue_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        if self.clear_dialogue_button is not None:
+            self.clear_dialogue_button.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        self._refresh_start_button_enabled()
+
+    def _refresh_start_button_enabled(self) -> None:
+        if self.start_button is None:
+            return
+
+        if self.source_mode_var.get() == "conversational":
+            self.start_button.configure(state=tk.NORMAL if self.dialogue_entries else tk.DISABLED)
+            return
+
+        self.start_button.configure(state=tk.NORMAL)
+
+    def _refresh_clear_buttons_state(self) -> None:
+        if self.clear_characters_button is not None:
+            self.clear_characters_button.configure(state=tk.NORMAL if self.characters else tk.DISABLED)
+
+    def _clear_dialogue(self) -> None:
+        self.dialogue_entries.clear()
+        self._reset_dialogue_builder_rows()
+        self._refresh_conversation_list()
+        self._refresh_generate_dialogue_enabled()
+        if self.clear_dialogue_button is not None:
+            self.clear_dialogue_button.configure(state=tk.DISABLED)
+
+    def _clear_characters(self) -> None:
+        self.characters.clear()
+        self.dialogue_entries.clear()
+        self._reset_dialogue_builder_rows()
+        self._refresh_character_dropdown()
+        self._refresh_conversation_list()
+        self._refresh_generate_dialogue_enabled()
+        if self.clear_characters_button is not None:
+            self.clear_characters_button.configure(state=tk.DISABLED)
+        if self.clear_dialogue_button is not None:
+            self.clear_dialogue_button.configure(state=tk.DISABLED)
 
     def _render_model_fields(self) -> None:
         if self.model_specific_frame is None:
@@ -553,6 +974,29 @@ class TTSApp:
         model = self.model_var.get()
 
         source_mode = self.source_mode_var.get()
+        if source_mode == "conversational":
+            if model != "Kokoro":
+                raise ValueError("Conversational mode currently supports Kokoro only.")
+            if not self.dialogue_entries:
+                raise ValueError("Add dialogue entries before generating.")
+
+            lang_code = self.kokoro_lang_var.get().strip() or "a"
+            speed = self.kokoro_speed_var.get().strip() or "1.0"
+            try:
+                speed_value = float(speed)
+            except ValueError as exc:
+                raise ValueError("Speed must be a valid number.") from exc
+
+            return _GenerationJob(
+                model="Kokoro",
+                source_kind="conversational",
+                kokoro_lang_code=lang_code,
+                kokoro_speed=speed_value,
+                cuda_device=self.cuda_device_lookup.get(self.kokoro_cuda_var.get().strip()),
+                conversational_lines=list(self.dialogue_entries),
+                output_filename=f"Conversation_{uuid.uuid4()}.wav",
+            )
+
         if source_mode == "text":
             if self.inline_text_widget is None:
                 raise ValueError("Text input is not available.")
@@ -625,9 +1069,9 @@ class TTSApp:
             return
 
         self.last_generated_file = None
+        self.last_job_source_kind = job.source_kind
         if self.play_button is not None:
             self.play_button.configure(state=tk.DISABLED)
-            self.play_button.pack_forget()
 
         self.run_start_time = time.time()
         self.cancel_requested = False
@@ -713,6 +1157,9 @@ class TTSApp:
         self.proc_queue.put(("done", (0, self.cancel_requested, output_path)))
 
     def _run_kokoro_job(self, kokoro_module: object, job: _GenerationJob) -> Optional[Path]:
+        if job.source_kind == "conversational":
+            return self._run_conversational_kokoro_job(kokoro_module, job)
+
         output_path = self.workspace_dir / kokoro_module.generate_output_filename(job.kokoro_voice_label or "KOKORO")
 
         if job.source_kind == "text":
@@ -739,6 +1186,41 @@ class TTSApp:
                 scipy.io.wavfile.write(output_path, rate=kokoro_module.SAMPLE_RATE, data=combined_audio)
 
         return output_path if output_path.exists() else None
+
+    def _run_conversational_kokoro_job(self, kokoro_module: object, job: _GenerationJob) -> Optional[Path]:
+        if not job.conversational_lines:
+            return None
+
+        output_filename = job.output_filename or f"Conversation_{uuid.uuid4()}.wav"
+        output_path = self.workspace_dir / output_filename
+        audio_segments: List[object] = []
+
+        for character_name, line_text, voice_id in job.conversational_lines:
+            if self.cancel_requested:
+                break
+            generated_audio = kokoro_module.generate_kokoro_tts(
+                line_text,
+                voice_profile=voice_id,
+                voice_label=character_name,
+                lang_code=job.kokoro_lang_code or "a",
+                speed=job.kokoro_speed or 1.0,
+                output_filename=None,
+                return_audio_array=True,
+            )
+            if generated_audio is not None and generated_audio.size:
+                audio_segments.append(generated_audio)
+
+        if not audio_segments:
+            return None
+
+        combined_audio = kokoro_module.concatenate_audio_segments(audio_segments)
+        if combined_audio.size:
+            import scipy.io.wavfile
+
+            scipy.io.wavfile.write(output_path, rate=kokoro_module.SAMPLE_RATE, data=combined_audio)
+            return output_path
+
+        return None
 
     def _run_bark_job(self, bark_module: object, job: _GenerationJob) -> Optional[Path]:
         output_path = self.workspace_dir / bark_module.generate_output_filename()
@@ -818,9 +1300,12 @@ class TTSApp:
 
         if not cancelled and return_code == 0 and output_file is not None and output_file.exists():
             self.last_generated_file = output_file
-            if self.play_button is not None:
-                self.play_button.pack(side=tk.LEFT, padx=(10, 0))
             self._append_popup_log(f"Generated file: {output_file}\n")
+            if self.last_job_source_kind == "conversational":
+                if self.clear_dialogue_button is not None:
+                    self.clear_dialogue_button.configure(state=tk.NORMAL if self.dialogue_entries else tk.DISABLED)
+                if self.clear_characters_button is not None:
+                    self.clear_characters_button.configure(state=tk.NORMAL if self.characters else tk.DISABLED)
 
     def _close_popup(self) -> None:
         if self.popup is not None and self.popup.winfo_exists():
@@ -882,13 +1367,14 @@ class TTSApp:
             self._set_widget_interaction(self.main_container, enabled)
 
         if enabled:
-            if self.last_generated_file is not None and self.last_generated_file.exists():
-                if self.play_button is not None:
-                    self.play_button.pack(side=tk.LEFT, padx=(10, 0))
-                    self.play_button.configure(state=tk.NORMAL)
+            self._refresh_start_button_enabled()
+
+        if enabled:
+            if self.play_button is not None:
+                has_generated_file = self.last_generated_file is not None and self.last_generated_file.exists()
+                self.play_button.configure(state=tk.NORMAL if has_generated_file else tk.DISABLED)
         elif self.play_button is not None:
             self.play_button.configure(state=tk.DISABLED)
-            self.play_button.pack_forget()
 
     def _find_latest_generated_wav(self, after_ts: float) -> Optional[Path]:
         candidates: List[Path] = []
