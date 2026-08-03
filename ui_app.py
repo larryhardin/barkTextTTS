@@ -804,11 +804,17 @@ class TTSApp:
         if self.popup_progress is not None:
             self.popup_progress.stop()
 
+        output_available = output_file is not None and output_file.exists()
+
         status_message = "Generation complete."
-        if cancelled:
-            status_message = "Generation cancelled."
-        elif return_code != 0:
+        if return_code != 0:
             status_message = f"Generation failed (exit code {return_code})."
+        elif cancelled and output_available:
+            status_message = "Generation cancelled (output was still generated)."
+        elif cancelled:
+            status_message = "Generation cancelled."
+        elif not output_available:
+            status_message = "Generation finished but no WAV file was produced."
 
         self.popup_status_var.set(status_message)
         self._append_popup_log(f"\n{status_message}\n")
@@ -822,7 +828,8 @@ class TTSApp:
             except tk.TclError:
                 pass
 
-        if not cancelled and return_code == 0 and output_file is not None and output_file.exists():
+        if return_code == 0 and output_available:
+            assert output_file is not None
             self.last_generated_file = output_file
             if self.play_button is not None:
                 self.play_button.pack(side=tk.LEFT, padx=(10, 0))
