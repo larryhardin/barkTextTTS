@@ -715,7 +715,8 @@ class TTSApp:
         finally:
             log_writer.flush()
 
-        self.proc_queue.put(("done", (0, self.cancel_requested, output_path)))
+        return_code = 0 if output_path is not None else 1
+        self.proc_queue.put(("done", (return_code, self.cancel_requested, output_path)))
 
     def _run_kokoro_job(self, kokoro_module: object, job: _GenerationJob) -> Optional[Path]:
         output_path = self.workspace_dir / kokoro_module.generate_output_filename(job.kokoro_voice_label or "KOKORO")
