@@ -1,0 +1,22 @@
+{
+  "character_definitions": [
+    {
+      "character_name": "Alice",
+      "voice_language": "American",
+      "voice_sex": "Female",
+      "voice": "af_bella"
+    },
+    {
+      "character_name": "Bob",
+      "voice_language": "British",
+      "voice_sex": "Male",
+      "voice": "bm_george"
+    }
+  ],
+  "dialogue": [
+    {
+      "character": "Alice",
+      "line": "Hello Bob"
+    }
+  ]
+}

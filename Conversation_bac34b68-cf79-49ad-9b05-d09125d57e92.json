@@ -1,0 +1,42 @@
+{
+  "character_definitions": [
+    {
+      "character_name": "Larry",
+      "voice_language": "American",
+      "voice_sex": "Male",
+      "voice": "am_fenrir"
+    },
+    {
+      "character_name": "Laura",
+      "voice_language": "French",
+      "voice_sex": "Female",
+      "voice": "ff_siwis"
+    },
+    {
+      "character_name": "Narrator",
+      "voice_language": "Italian",
+      "voice_sex": "Male",
+      "voice": "im_nicola"
+    },
+    {
+      "character_name": "Suki Yummi",
+      "voice_language": "Mandarin",
+      "voice_sex": "Female",
+      "voice": "zf_xiaoyi"
+    }
+  ],
+  "dialogue": [
+    {
+      "character": "Larry",
+      "line": "Hey baby, wanna get frisky?"
+    },
+    {
+      "character": "Laura",
+      "line": "Yes"
+    },
+    {
+      "character": "Suki Yummi",
+      "line": "Oh, me too prease? I love eating Missa Raura's sweet pussy."
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "characters": [
+    {
+      "name": "Alice",
+      "voice_id": "af_bella",
+      "language": "American",
+      "sex": "Female"
+    }
+  ],
+  "dialogue": [
+    "Alice: Hello there"
+  ]
+}
