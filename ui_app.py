@@ -1,8 +1,6 @@
 import os
 import queue
 import re
-import subprocess
-import sys
 import threading
 import time
 import uuid
@@ -1131,15 +1129,22 @@ class TTSApp:
         try:
             with redirect_stdout(log_writer), redirect_stderr(log_writer):
                 if job.cuda_device is not None:
+                    try:
+                        import torch
+
+                        torch.cuda.set_device(int(job.cuda_device))
+                        print(f"Using CUDA device index: {job.cuda_device}", flush=True)
+                    except Exception as exc:
+                        print(f"Warning: could not set CUDA device to {job.cuda_device}: {exc}", flush=True)
+
                     if job.model == "Kokoro":
                         import kokoro_gen as kokoro_module
 
-                        kokoro_module.apply_cuda_device(job.cuda_device)
+                        kokoro_module.clear_kokoro_pipelines()
                     else:
                         import cuda_gen as bark_module
 
-                        bark_module.apply_cuda_device(job.cuda_device)
-
+                        bark_module.cleanup_bark_model_components()
                 if job.model == "Kokoro":
                     import kokoro_gen as kokoro_module
 
@@ -1154,7 +1159,8 @@ class TTSApp:
         finally:
             log_writer.flush()
 
-        self.proc_queue.put(("done", (0, self.cancel_requested, output_path)))
+        return_code = 0 if output_path is not None else 1
+        self.proc_queue.put(("done", (return_code, self.cancel_requested, output_path)))
 
     def _run_kokoro_job(self, kokoro_module: object, job: _GenerationJob) -> Optional[Path]:
         if job.source_kind == "conversational":
@@ -1280,11 +1286,17 @@ class TTSApp:
         if self.popup_progress is not None:
             self.popup_progress.stop()
 
+        output_available = output_file is not None and output_file.exists()
+
         status_message = "Generation complete."
-        if cancelled:
-            status_message = "Generation cancelled."
-        elif return_code != 0:
+        if return_code != 0:
             status_message = f"Generation failed (exit code {return_code})."
+        elif cancelled and output_available:
+            status_message = "Generation cancelled (output was still generated)."
+        elif cancelled:
+            status_message = "Generation cancelled."
+        elif not output_available:
+            status_message = "Generation finished but no WAV file was produced."
 
         self.popup_status_var.set(status_message)
         self._append_popup_log(f"\n{status_message}\n")
@@ -1298,7 +1310,8 @@ class TTSApp:
             except tk.TclError:
                 pass
 
-        if not cancelled and return_code == 0 and output_file is not None and output_file.exists():
+        if return_code == 0 and output_available:
+            assert output_file is not None
             self.last_generated_file = output_file
             self._append_popup_log(f"Generated file: {output_file}\n")
             if self.last_job_source_kind == "conversational":
