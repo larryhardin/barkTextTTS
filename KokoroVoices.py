@@ -1,7 +1,7 @@
 class KokoroVoices:
     class American:
         # Female Voices
-        HEART  = "af_heart"  # Default / Recommended
+        HEART  = "af_heart"  # Recommended
         ALLOY  = "af_alloy"
         AOEDE  = "af_aoede"
         BELLA  = "af_bella"
