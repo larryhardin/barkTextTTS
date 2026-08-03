@@ -1,6 +1,60 @@
 # barkTextTTS
 Text-to-speech scripts for Bark and Kokoro-82M.
 
+## UI App (Recommended)
+
+The project now includes a desktop UI in `ui_app.py` that drives both generators.
+
+Launch:
+
+```powershell
+python .\ui_app.py
+```
+
+### Current UI Features
+
+- Model selector: `Kokoro` (default) or `Bark`
+- Dynamic form rendering per model
+	- Kokoro uses `kokoro_gen.py` arguments
+	- Bark uses `cuda_gen.py` arguments
+- Input source modes
+	- Inline text
+	- Script file picker with `*.txt` and `*.json` filter
+- Kokoro voice flow (cascading dropdowns)
+	- Voice language -> Voice sex -> Voice
+	- Display names remove trailing `_F` / `_M`
+	- Display names are normalized to title-case
+	- Only supported Kokoro-82M voices are shown
+- CUDA device dropdown
+	- Auto-detected from available GPUs
+	- Includes `Auto` plus indexed GPU entries
+- Model loading UX
+	- Loading message + progress bar
+	- 2-second hold after 100%, then hidden
+- Generation UX
+	- Modal popup with live log output and cancel button
+	- Main UI is disabled while popup is open
+	- Main UI is restored and refocused when popup closes
+- Playback
+	- `Play Generated File` button appears after successful generation
+
+### Performance Notes
+
+- The UI runs generation in-process to minimize time between runs.
+- When settings are unchanged and only text changes, repeat generation is faster because the model stays warm in the running UI process.
+- Cancel in this mode is cooperative (it does not hard-kill an external subprocess).
+
+### Dependencies
+
+Minimum Python packages used by this project:
+
+```powershell
+pip install numpy scipy torch transformers kokoro soundfile
+```
+
+Windows note:
+Install `espeak-ng` for Kokoro pronunciation/fallback paths.
+
 ## Kokoro Gen: Quick Start
 
 Install dependencies:
@@ -23,7 +77,7 @@ Example: `BELLA_550e8400-e29b-41d4-a716-446655440000.wav`.
 
 ## Kokoro Gen: All Run Scenarios
 
-### Voice Mapping Rules (New)
+### Voice Mapping Rules
 
 The `--voice` parameter now maps to names defined in `KokoroVoices.py`.
 
@@ -31,6 +85,7 @@ The `--voice` parameter now maps to names defined in `KokoroVoices.py`.
 - The input is normalized to uppercase for lookup
 - Internal voice identifiers are still accepted (`af_bella` works)
 - If no match is found, the script logs a warning and defaults to `BELLA` (`af_bella`)
+- Unsupported voices are filtered/fallbacked to avoid missing voice files in `hexgrad/Kokoro-82M`
 
 Examples:
 
