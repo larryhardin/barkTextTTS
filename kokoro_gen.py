@@ -1,6 +1,7 @@
 import argparse
 import json
 import re
+import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -10,6 +11,7 @@ from KokoroVoices import KokoroVoices
 
 SAMPLE_RATE = 24000
 _KOKORO_PIPELINES: Dict[str, Any] = {}
+_KOKORO_PIPELINES_LOCK = threading.Lock()
 _KOKORO_REPO_ID = "hexgrad/Kokoro-82M"
 _SUPPORTED_VOICE_IDS = {
     "af_alloy",
@@ -168,21 +170,34 @@ def load_kokoro_pipeline(lang_code: str) -> Any:
     if lang_code in _KOKORO_PIPELINES:
         return _KOKORO_PIPELINES[lang_code]
 
-    try:
-        from kokoro import KPipeline  # pyright: ignore[reportMissingImports]
-    except ImportError as exc:
-        raise RuntimeError(
-            "Kokoro is not installed. Install it with `pip install kokoro soundfile` and install espeak-ng on Windows."
-        ) from exc
+    with _KOKORO_PIPELINES_LOCK:
+        if lang_code in _KOKORO_PIPELINES:
+            return _KOKORO_PIPELINES[lang_code]
 
-    log(f"Loading Kokoro pipeline for language code '{lang_code}'...")
-    pipeline = KPipeline(lang_code=lang_code, repo_id=_KOKORO_REPO_ID)
-    _KOKORO_PIPELINES[lang_code] = pipeline
-    return pipeline
+        try:
+            from kokoro import KPipeline  # pyright: ignore[reportMissingImports]
+        except ImportError as exc:
+            raise RuntimeError(
+                "Kokoro is not installed. Install it with `pip install kokoro soundfile` and install espeak-ng on Windows."
+            ) from exc
+
+        log(f"Loading Kokoro pipeline for language code '{lang_code}'...")
+        pipeline = KPipeline(lang_code=lang_code, repo_id=_KOKORO_REPO_ID)
+        _KOKORO_PIPELINES[lang_code] = pipeline
+        return pipeline
 
 
 def clear_kokoro_pipelines() -> None:
-    _KOKORO_PIPELINES.clear()
+    with _KOKORO_PIPELINES_LOCK:
+        _KOKORO_PIPELINES.clear()
+
+
+def warm_kokoro_voice(lang_code: str, voice_profile: str, speed: float = 1.0) -> None:
+    """Best-effort warm-up for a specific Kokoro voice profile."""
+    pipeline = load_kokoro_pipeline(lang_code)
+    for _, _, _audio in pipeline("Warmup.", voice=voice_profile, speed=speed, split_pattern=r"\n+"):
+        break
+    log(f"Warmed Kokoro voice '{voice_profile}' for language code '{lang_code}'.")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

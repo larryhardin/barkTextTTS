@@ -4,10 +4,11 @@ import re
 import threading
 import time
 import uuid
+import json
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -277,6 +278,7 @@ class TTSApp:
 
         self.start_button: Optional[ttk.Button] = None
         self.play_button: Optional[ttk.Button] = None
+        self.actions_frame: Optional[ttk.Frame] = None
         self.last_generated_file: Optional[Path] = None
 
         self.popup: Optional[tk.Toplevel] = None
@@ -288,15 +290,22 @@ class TTSApp:
         self.widget_state_cache: Dict[str, object] = {}
 
         self.proc_thread: Optional[threading.Thread] = None
+        self.kokoro_preload_thread: Optional[threading.Thread] = None
+        self.preloaded_kokoro_voice_keys: Set[Tuple[str, str]] = set()
+        self.preloaded_kokoro_voice_lock = threading.Lock()
         self.proc_queue: queue.Queue[Tuple[str, object]] = queue.Queue()
         self.cancel_requested = False
         self.run_start_time = 0.0
 
         self._build_ui()
         self._render_model_fields()
+        self._start_background_kokoro_preload()
 
     def _build_ui(self) -> None:
-        self.main_container = ttk.Frame(self.root, padding=14)
+        self.actions_frame = ttk.Frame(self.root, padding=(14, 0, 14, 14))
+        self.actions_frame.pack(side=tk.BOTTOM, fill=tk.X)
+
+        self.main_container = ttk.Frame(self.root, padding=(14, 14, 14, 0))
         self.main_container.pack(fill=tk.BOTH, expand=True)
 
         title = ttk.Label(self.main_container, text="Text to Speech Generator", font=("Segoe UI", 16, "bold"))
@@ -362,7 +371,7 @@ class TTSApp:
         self.model_specific_frame = ttk.Frame(model_group)
         self.model_specific_frame.pack(fill=tk.X)
 
-        actions = ttk.Frame(self.main_container)
+        actions = ttk.Frame(self.actions_frame)
         actions.pack(fill=tk.X, pady=(4, 0))
 
         self.start_button = ttk.Button(actions, text="Start Generation", command=self._start_generation)
@@ -380,6 +389,50 @@ class TTSApp:
     def _on_model_selected(self, _event: object = None) -> None:
         self._render_model_fields()
         self._start_load_animation()
+
+    def _start_background_kokoro_preload(self) -> None:
+        # Warm the default Kokoro pipeline while the user prepares text/dialogue.
+        preload_lang_code = self.kokoro_lang_var.get().strip() or "a"
+        self.kokoro_preload_thread = threading.Thread(
+            target=self._preload_kokoro_pipeline_worker,
+            args=(preload_lang_code,),
+            daemon=True,
+        )
+        self.kokoro_preload_thread.start()
+
+    def _preload_kokoro_pipeline_worker(self, lang_code: str) -> None:
+        try:
+            import kokoro_gen as kokoro_module
+
+            kokoro_module.load_kokoro_pipeline(lang_code)
+        except Exception:
+            # Preload is best-effort only; generation path handles/report errors.
+            pass
+
+    def _start_background_kokoro_voice_preload(self, voice_id: str) -> None:
+        lang_code = self.kokoro_lang_var.get().strip() or "a"
+        preload_key = (lang_code, voice_id)
+
+        with self.preloaded_kokoro_voice_lock:
+            if preload_key in self.preloaded_kokoro_voice_keys:
+                return
+            self.preloaded_kokoro_voice_keys.add(preload_key)
+
+        threading.Thread(
+            target=self._preload_kokoro_voice_worker,
+            args=(lang_code, voice_id, preload_key),
+            daemon=True,
+        ).start()
+
+    def _preload_kokoro_voice_worker(self, lang_code: str, voice_id: str, preload_key: Tuple[str, str]) -> None:
+        try:
+            import kokoro_gen as kokoro_module
+
+            kokoro_module.warm_kokoro_voice(lang_code=lang_code, voice_profile=voice_id)
+        except Exception:
+            # Allow retry on the next character save if warm-up fails.
+            with self.preloaded_kokoro_voice_lock:
+                self.preloaded_kokoro_voice_keys.discard(preload_key)
 
     def _render_source_mode(self) -> None:
         self._clear_frame(self.source_content_frame)
@@ -429,6 +482,7 @@ class TTSApp:
         ttk.Label(name_row, text="Character Name:", width=18).pack(side=tk.LEFT)
         name_entry = ttk.Entry(name_row, textvariable=self.character_name_var)
         name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        name_entry.bind("<KeyRelease>", self._refresh_character_add_enabled)
         name_entry.bind("<FocusOut>", self._on_character_name_focus_out)
 
         voice_row = ttk.Frame(assign_frame)
@@ -469,6 +523,7 @@ class TTSApp:
             width=18,
         )
         self.character_voice_combo.grid(row=0, column=5, padx=(6, 0), sticky="w")
+        self.character_voice_combo.bind("<<ComboboxSelected>>", self._refresh_character_add_enabled)
 
         dialogue_frame = ttk.LabelFrame(self.source_content_frame, text="Dialogue Builder", padding=10)
         dialogue_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
@@ -550,6 +605,7 @@ class TTSApp:
         self._refresh_dialogue_add_enabled()
         self._refresh_generate_dialogue_enabled()
         self._refresh_clear_buttons_state()
+        self._refresh_character_add_enabled()
 
     def _on_dialogue_builder_canvas_configure(self, event: object) -> None:
         if self.dialogue_builder_canvas is None or self.dialogue_builder_canvas_window_id is None:
@@ -557,9 +613,14 @@ class TTSApp:
         self.dialogue_builder_canvas.itemconfigure(self.dialogue_builder_canvas_window_id, width=event.width)
 
     def _on_character_name_focus_out(self, _event: object = None) -> None:
-        is_name_valid = bool(self.character_name_var.get().strip())
+        self._refresh_character_add_enabled()
+
+    def _refresh_character_add_enabled(self, _event: object = None) -> None:
+        has_name = bool(self.character_name_var.get().strip())
+        selected_voice = self.character_voice_display_var.get().strip()
+        has_valid_voice = selected_voice in self.character_voice_lookup
         if self.character_done_button is not None:
-            self.character_done_button.configure(state=tk.NORMAL if is_name_valid else tk.DISABLED)
+            self.character_done_button.configure(state=tk.NORMAL if (has_name and has_valid_voice) else tk.DISABLED)
 
     def _reset_character_editor(self) -> None:
         self.character_name_var.set("")
@@ -568,8 +629,7 @@ class TTSApp:
         self.character_sex_var.set("Female")
         self._refresh_character_sex_options()
         self._refresh_character_voice_options()
-        if self.character_done_button is not None:
-            self.character_done_button.configure(state=tk.DISABLED)
+        self._refresh_character_add_enabled()
 
     def _on_character_language_changed(self, _event: object = None) -> None:
         self._refresh_character_sex_options()
@@ -607,6 +667,8 @@ class TTSApp:
         if current_display not in self.character_voice_lookup:
             self.character_voice_display_var.set(display_values[0] if display_values else "")
 
+        self._refresh_character_add_enabled()
+
     def _save_character(self) -> None:
         name = self.character_name_var.get().strip()
         voice_display = self.character_voice_display_var.get().strip()
@@ -619,6 +681,7 @@ class TTSApp:
             self.character_sex_var.get().strip(),
             voice_id,
         )
+        self._start_background_kokoro_voice_preload(voice_id)
         self._refresh_character_dropdown()
         self._refresh_clear_buttons_state()
         self._reset_character_editor()
@@ -1066,6 +1129,15 @@ class TTSApp:
             messagebox.showerror("Invalid Input", str(exc))
             return
 
+        if job.source_kind == "conversational":
+            self._ensure_conversational_output_filename(job)
+            try:
+                script_json_path = self._export_conversational_script_json(job)
+            except OSError as exc:
+                messagebox.showerror("Export Failed", f"Could not write dialogue JSON: {exc}")
+                return
+            self.proc_queue.put(("log", f"Exported dialogue JSON: {script_json_path}\n"))
+
         self.last_generated_file = None
         self.last_job_source_kind = job.source_kind
         if self.play_button is not None:
@@ -1079,6 +1151,49 @@ class TTSApp:
         self.proc_thread = threading.Thread(target=self._run_generation_worker, args=(job,), daemon=True)
         self.proc_thread.start()
         self.root.after(120, self._poll_proc_queue)
+
+    def _ensure_conversational_output_filename(self, job: _GenerationJob) -> None:
+        if job.source_kind != "conversational":
+            return
+        if not job.output_filename:
+            job.output_filename = f"Conversation_{uuid.uuid4()}.wav"
+
+    def _export_conversational_script_json(self, job: _GenerationJob) -> Path:
+        if not job.conversational_lines:
+            raise OSError("No conversational lines were found.")
+
+        self._ensure_conversational_output_filename(job)
+        output_basename = Path(job.output_filename or "Conversation").stem
+        script_json_path = self.workspace_dir / f"{output_basename}.json"
+
+        character_definitions = []
+        for character_name, (language, sex, voice_id) in self.characters.items():
+            character_definitions.append(
+                {
+                    "character_name": character_name,
+                    "voice_language": language,
+                    "voice_sex": sex,
+                    "voice": voice_id,
+                }
+            )
+
+        dialogue_lines = [
+            {
+                "character": character_name,
+                "line": line_text,
+            }
+            for character_name, line_text, _voice_id in job.conversational_lines
+        ]
+
+        payload = {
+            "character_definitions": character_definitions,
+            "dialogue": dialogue_lines,
+        }
+
+        with script_json_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, ensure_ascii=False)
+
+        return script_json_path
 
     def _open_progress_popup(self, model: str) -> None:
         popup = tk.Toplevel(self.root)
@@ -1378,6 +1493,8 @@ class TTSApp:
     def _set_ui_interaction(self, enabled: bool) -> None:
         if hasattr(self, "main_container"):
             self._set_widget_interaction(self.main_container, enabled)
+        if self.actions_frame is not None:
+            self._set_widget_interaction(self.actions_frame, enabled)
 
         if enabled:
             self._refresh_start_button_enabled()
