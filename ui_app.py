@@ -685,15 +685,22 @@ class TTSApp:
         try:
             with redirect_stdout(log_writer), redirect_stderr(log_writer):
                 if job.cuda_device is not None:
+                    try:
+                        import torch
+
+                        torch.cuda.set_device(int(job.cuda_device))
+                        print(f"Using CUDA device index: {job.cuda_device}", flush=True)
+                    except Exception as exc:
+                        print(f"Warning: could not set CUDA device to {job.cuda_device}: {exc}", flush=True)
+
                     if job.model == "Kokoro":
                         import kokoro_gen as kokoro_module
 
-                        kokoro_module.apply_cuda_device(job.cuda_device)
+                        kokoro_module.clear_kokoro_pipelines()
                     else:
                         import cuda_gen as bark_module
 
-                        bark_module.apply_cuda_device(job.cuda_device)
-
+                        bark_module.cleanup_bark_model_components()
                 if job.model == "Kokoro":
                     import kokoro_gen as kokoro_module
 
